@@ -1,0 +1,183 @@
+---
+title: "Choroplet Maps with `leaflet` and `ggplot`"
+description: |
+  Plotting UCR violent crime with choroplet maps using different packages
+date: 11-15-2020
+categories:
+  - map
+  - choroplet
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(dplyr)
+library(tigris)
+library(leaflet)
+library(RColorBrewer)
+library(ggplot2)
+library(viridis)
+```
+
+## Data preperation
+
+UCR data can be downloaded from [ICPSR](https://www.icpsr.umich.edu/web/pages/index.html) web page as a `.rda` file. Let's read the data into R and rename it:
+
+```{r load_data, message=FALSE, warning=FALSE}
+load("../../datasets/37059-0001-Data.rda")
+ucrRaw <- da37059.0001
+```
+
+We will merge UCR dataset with geographic information data. We need to create a common key:
+
+```{r fips_code}
+for(i in 1:length(ucrRaw$FIPS_ST)){
+  if(ucrRaw$FIPS_ST[i] < 10){
+    ucrRaw$CHR_FIPS_ST[i] <- paste(0, as.character(ucrRaw$FIPS_ST[i]), sep = "")
+  }else{
+    ucrRaw$CHR_FIPS_ST[i] <- as.character(ucrRaw$FIPS_ST[i])
+  }
+}
+```
+
+We need to calculate state level crime data and take out US territories outside mainland:
+
+```{r state_level}
+ucrStates <- ucrRaw %>% 
+  select(c(7:8,10:57)) %>% 
+  group_by(CHR_FIPS_ST) %>% 
+  summarise(across(c(1:2,4:49), sum), COVIND = mean(COVIND, na.rm = TRUE)) %>% 
+  filter(CHR_FIPS_ST != "02" , CHR_FIPS_ST != "78" , CHR_FIPS_ST != "15" , CHR_FIPS_ST != "60" , 
+         CHR_FIPS_ST != "66" , CHR_FIPS_ST != "69" , CHR_FIPS_ST != "72")
+```
+
+There are different ways to incorporate geographic information onto the analysis. Here we use `tigris` package:
+
+```{r geodata, include=FALSE}
+states <- states(cb=T) %>% 
+  filter(GEOID != "02" , GEOID != "78" , GEOID != "15" , GEOID != "60" , 
+           GEOID != "66" , GEOID != "69" , GEOID != "72" )
+```
+
+Finally we merge crime data with geographic information data and calculate a new variable showing violent crime per 1,000 people for each state:
+
+```{r geodata1}
+shp_ucrStates <- geo_join(states, ucrStates, "GEOID", "CHR_FIPS_ST")
+shp_ucrStates$VCper1000 <- (shp_ucrStates$P1VLNT / shp_ucrStates$CPOPARST) * 1000
+```
+
+## `leaflet` Map
+Leaflet is a powerful package for producing interactive maps:
+
+```{r leaflet_map}
+m <- leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-98.483330, 38.712046, zoom = 4)
+
+bins <- c(0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, Inf)
+pal <- colorBin("YlOrRd", domain = shp_ucrStates$VCper1000)
+m %>% addPolygons(data = states,
+  fillColor = ~pal(shp_ucrStates$VCper1000),
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  dashArray = "3",
+  fillOpacity = 0.7,
+  highlight = highlightOptions(
+    weight = 5,
+    color = "#666",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = ~paste0(NAME, ": ", formatC(shp_ucrStates$P1VLNT, format ="d", big.mark = ","))) %>% 
+  addLegend(pal = pal, 
+            values = shp_ucrStates$VCper1000, 
+            position = "bottomright", 
+            title = "Violent Crime <br />per 1000<br/>residents")
+```
+
+States are colored according to total number of reported violent crimes per 1,000 people. Hovering over the map highlights states and activate pop ups.
+
+We can apply same logic to an individual state. Here I will draw map of New York state and color countries according to the number of homicides. First, prepare the data:
+
+```{r include=FALSE}
+#Filter NY (FIPS Code = 36) from the dataset
+ny_counties <- da37059.0001 %>% 
+  filter(FIPS_ST == "36")
+
+#Convert FIPS code into character for compatibility
+for(i in 1:length(ny_counties$FIPS_CTY)){
+  if(ny_counties$FIPS_CTY[i] < 10){
+    ny_counties$CHR_FIPS_CTY[i] <- paste("00", as.character(ny_counties$FIPS_CTY[i]), sep = "")
+  }else if(ny_counties$FIPS_CTY[i] < 100 & ny_counties$FIPS_CTY[i] > 9 ){
+      ny_counties$CHR_FIPS_CTY[i] <- paste("0", as.character(ny_counties$FIPS_CTY[i]), sep = "")
+  }else{
+    ny_counties$CHR_FIPS_CTY[i] <- as.character(ny_counties$FIPS_CTY[i])
+  }
+}
+
+#Download geographic data of New York State via Tigris package
+geo_ny_counties <- counties(state = "NY", cb = TRUE)
+
+#Merge geographic data with UCR data
+merged_ny_counties <- geo_join(geo_ny_counties, ny_counties, "COUNTYFP", "CHR_FIPS_CTY")
+```
+
+Now we are ready to draw the map. Code is similar to the previous one. I changed latitude and longtitude, zoom level, bin width and variable name:
+
+```{r}
+m <- leaflet() %>% 
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-75.59655, 42.921241, zoom = 6)
+
+bins <- c(0, 1, 5, 7, 10, 15, 25, 180)
+pal <- colorBin("YlOrRd", domain = merged_ny_counties$MURDER, bins = bins)
+m %>% addPolygons(data = merged_ny_counties,
+                  fillColor = ~pal(merged_ny_counties$MURDER),
+                  weight = 2,
+                  opacity = 1,
+                  color = "white",
+                  dashArray = "3",
+                  fillOpacity = 0.7,
+                  highlight = highlightOptions(
+                    weight = 5,
+                    color = "#666",
+                    fillOpacity = 0.7,
+                    bringToFront = TRUE),
+                  label = ~paste0(NAME, ": ", formatC(merged_ny_counties$MURDER, format ="d", big.mark = ","))) %>% 
+  addLegend(pal = pal, values = merged_ny_counties, position = "bottomright", title = "Homicides")
+```
+
+
+## `ggplot` map
+We can produce static and publication ready maps with `ggplot`:
+
+```{r ggplot_map}
+shp_ucrStates %>% 
+  ggplot(aes(fill = VCper1000, color = VCper1000)) +
+  geom_sf() +
+  coord_sf(crs = 5070, datum = NA) +
+  scale_fill_viridis(direction = -1) + 
+  scale_color_viridis(direction = -1) +
+  labs(title = "US violent crime map",
+       subtitle = "Number of violent crimes per 1,000 residents reported by LE agencies", 
+       caption = "Data Source: UCR - Unified Crime Reports ; 2019",
+       fill = "Violent Crimes") + guides(color=FALSE)
+```
+
+Again we can do a similar map for individual states:
+
+```{r}
+merged_ny_counties %>% 
+  ggplot(aes(fill = MURDER, color = MURDER)) +
+  geom_sf() +
+  coord_sf(crs = 5070, datum = NA) +
+  scale_fill_viridis(direction = -1) + 
+  scale_color_viridis(direction = -1) +
+  labs(title = "New York State",
+       subtitle = "Number of homicides reported by LE agencies", 
+       caption = "Data Source: UCR - Unified Crime Reports ; 2019",
+       fill = "Homicides") + guides(color=FALSE)
+```

@@ -1,0 +1,211 @@
+---
+title: "Maps with Alaska and Hawaii"
+description: |
+  Mapping number of homicides on US map with AL and HI
+date: 11-15-2020
+categories:
+  - map
+output:
+  distill::distill_article:
+    self_contained: false
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+library(dplyr)
+library(sf)
+library(tigris)
+library(tmap)
+library(grid)
+library(maptools)
+library(ggplot2)
+library(ggmap)
+# knit it on console with `rmarkdown::render()` command
+```
+
+## Data preperation
+Load UCR dataset, geographic data and process/merge them for mapping:
+
+```{r load_data, message=FALSE, warning=FALSE, results='hide'}
+# load UCR data and rename it
+load("../../datasets/37059-0001-Data.rda")
+ucr <- da37059.0001
+
+# US states and countries are available in `tigris` package
+usstates <- states(cb = TRUE) %>% filter(!(STATEFP %in% c("60","66","69","72","78")))
+uscounties <- counties(cb = TRUE) %>% filter(!(STATEFP %in% c("60","66","69","72","78")))
+
+#UCR provides numeric state and county codes. 
+#We need to convert state and county FIPS into character.
+#Then we paste them to create a unique code for counties.
+#Convert FIPS state and county code into character and create unique code for counties
+for(i in 1:length(ucr$FIPS_ST)){
+  if(ucr$FIPS_ST[i] < 10){
+    ucr$CHR_FIPS_ST[i] <- paste(0, as.character(ucr$FIPS_ST[i]), sep = "")
+  }else{
+    ucr$CHR_FIPS_ST[i] <- as.character(ucr$FIPS_ST[i])
+  }
+}
+
+for(i in 1:length(ucr$FIPS_CTY)){
+  if(ucr$FIPS_CTY[i] < 10){
+    ucr$CHR_FIPS_CTY[i] <- paste("00", as.character(ucr$FIPS_CTY[i]), sep = "")
+  }else if(ucr$FIPS_CTY[i] < 100 & ucr$FIPS_CTY[i] > 9 ){
+    ucr$CHR_FIPS_CTY[i] <- paste("0", as.character(ucr$FIPS_CTY[i]), sep = "")
+  }else{
+    ucr$CHR_FIPS_CTY[i] <- as.character(ucr$FIPS_CTY[i])
+  }
+}
+
+# create a key to merge two datasets
+ucr$FIPS_ST_CTY <- paste(ucr$CHR_FIPS_ST,ucr$CHR_FIPS_CTY,sep="")
+uscounties$FIPS_ST_CTY <- paste(uscounties$STATEFP, uscounties$COUNTYFP, sep="")
+
+ucr_states <- ucr %>%
+  group_by(CHR_FIPS_ST) %>% 
+  summarise(across(c(7:8,10:56), sum), COVIND = mean(COVIND, na.rm = TRUE))
+
+#merge two datasets
+geo_ucr_counties <- left_join(uscounties, ucr, key = "FIPS_ST_CTY")
+geo_ucr_states <- left_join(usstates, ucr_states, by = c("STATEFP" = "CHR_FIPS_ST"))
+```
+
+## Map with `tmap`
+
+### Counties:
+
+```{r message=FALSE, warning=FALSE}
+US_cont <- geo_ucr_counties[!(geo_ucr_counties$STATEFP %in% c("02","15")),]
+US_AK <- geo_ucr_counties[geo_ucr_counties$STATEFP == "02", ]
+US_HI <- geo_ucr_counties[geo_ucr_counties$STATEFP == "15",]
+
+# change back to the plotting mode
+tmap_mode("plot")
+
+# plot contiguous US
+usmap <- tm_shape(US_cont, projection=2163) +
+  tm_polygons(col = "MURDER", border.alpha = 0.3, style = "jenks", title = "Homicide") +
+  tm_borders(lwd=1, col = "black", alpha = .5) +
+  tm_layout(title.position = c("center", "top"), 
+            legend.position = c("LEFT", "TOP"),
+            legend.title.size = 0.7,
+            legend.text.size = 0.5,
+            frame = FALSE, 
+            inner.margins = c(0.1, 0.1, 0.05, 0.05))
+
+# Alaska inset
+m_AK <- tm_shape(US_AK, projection = 3338) +
+  tm_polygons(col = "MURDER", border.alpha = 0.3, style = "jenks", title = "Homicide") +
+  tm_layout(legend.show = FALSE, bg.color = NA, frame = FALSE)
+
+# Hawaii inset
+m_HI <- tm_shape(US_HI, projection = 3759) +
+  tm_polygons(col = "MURDER", border.alpha = 0.3, style = "jenks", title = "Homicide") +
+  tm_layout(legend.show = FALSE, bg.color = NA, frame = FALSE)
+
+# print insets
+print(usmap)
+print(m_AK, vp=viewport(x= 0.15, y= 0.15, width= 0.3, height= 0.3))
+print(m_HI, vp=viewport(x= 0.4, y= 0.1, width= 0.2, height= 0.1))
+```
+
+### States:
+
+```{r message=FALSE, warning=FALSE}
+US_cont <- geo_ucr_states[!(geo_ucr_states$STATEFP %in% c("02","15")),]
+US_AK <- geo_ucr_states[geo_ucr_states$STATEFP == "02", ]
+US_HI <- geo_ucr_states[geo_ucr_states$STATEFP == "15",]
+
+# change back to the plotting mode
+tmap_mode("plot")
+
+# plot contiguous US
+usmap <- tm_shape(US_cont, projection=2163) +
+  tm_polygons(col = "MURDER", border.alpha = 0.3, style = "jenks", title = "Homicide") +
+  tm_borders(lwd=1, col = "black", alpha = .5) +
+  tm_layout(title.position = c("center", "top"), 
+            legend.position = c("LEFT", "TOP"),
+            legend.title.size = 0.7,
+            legend.text.size = 0.5,
+            frame = FALSE, 
+            inner.margins = c(0.1, 0.1, 0.05, 0.05))
+
+# Alaska inset
+m_AK <- tm_shape(US_AK, projection = 3338) +
+  tm_polygons(col = "MURDER", border.alpha = 0.3, style = "jenks", title = "Homicide") +
+  tm_layout(legend.show = FALSE, bg.color = NA, frame = FALSE)
+
+# Hawaii inset
+m_HI <- tm_shape(US_HI, projection = 3759) +
+  tm_polygons(col = "MURDER", border.alpha = 0.3, style = "jenks", title = "Homicide") +
+  tm_layout(legend.show = FALSE, bg.color = NA, frame = FALSE)
+
+# print insets
+print(usmap)
+print(m_AK, vp=viewport(x= 0.15, y= 0.15, width= 0.3, height= 0.3))
+print(m_HI, vp=viewport(x= 0.4, y= 0.1, width= 0.2, height= 0.1))
+```
+
+## Map with ggmap
+
+### Data preperation
+
+```{r message=FALSE, warning=FALSE}
+#UCR data for all ages
+#load("/home/comes/RDir/UCR/ICPSR_37059/DS0001/37059-0001-Data.rda")
+#ucr <- da37059.0001 #rename dataset
+#summarize state data
+ucr_states <- ucr %>%
+  group_by(FIPS_ST) %>% 
+  summarise(across(c(6:7,9:55), sum), COVIND = mean(COVIND, na.rm = TRUE))
+# read US states longitude and latitude data
+us_states_ll <- read.csv("../../datasets/us-states-lat-long.csv")
+# merge two datasets
+ucr_states_ll <- left_join(ucr_states, us_states_ll, by = c("FIPS_ST" = "fips"))
+```
+
+### Map
+
+```{r fig.height=4, fig.width=7, message=FALSE, warning=FALSE}
+us_bbox <- c(left = -125, bottom = 25, right = -55, top = 50)
+us_main_map <- get_stamenmap(us_bbox, zoom = 5, maptype = "terrain")
+p_main <- ggmap(us_main_map) +
+  geom_point(data = ucr_states_ll, 
+             aes(x = longitude, y = latitude, size = sqrt(MURDER)), alpha = .3, color = "red") +
+  labs(x = "", y = "", size = "Homicide") +
+  theme(axis.title = element_blank(), 
+        axis.text  = element_blank(),
+        axis.ticks = element_blank())
+
+alaska_bbox <- c(left = -180, bottom = 50, right = -128, top = 72)
+alaska_map <- get_stamenmap(alaska_bbox, zoom = 5, maptype = "terrain") 
+p_alaska <- ggmap(alaska_map) +
+  geom_point(data = filter(ucr_states_ll, FIPS_ST == 2), 
+             aes(x = longitude, y = latitude, size = sqrt(MURDER)), alpha = .3, color = "red") +
+  labs(title = "Alaska") +
+  theme(axis.title = element_blank(), 
+        axis.text  = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "NONE")
+
+hawaii_bbox <- c(left = -160, bottom = 18.5, right = -154.5, top = 22.5)
+hawaii_map <- get_stamenmap(hawaii_bbox, zoom = 6, maptype = "terrain") 
+p_hawaii <- ggmap(hawaii_map) + 
+  geom_point(data = filter(ucr_states_ll, FIPS_ST == 15), 
+             aes(x = longitude, y = latitude, size = sqrt(MURDER)), alpha = .3, color = "red") +
+  labs(title = "Hawaii") +
+  theme(axis.title = element_blank(), 
+        axis.text  = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "NONE")
+
+p_main +
+  inset(ggplotGrob(p_alaska), xmin = -76.7, xmax = -66.7, ymin = 26, ymax = 35) +
+  inset(ggplotGrob(p_hawaii), xmin = -66.5, xmax = -55.5, ymin = 26, ymax = 35)
+```
+
